@@ -2,10 +2,12 @@ import discord
 from discord.ext import commands, tasks
 from scraper import check_for_new_spoilers, mark_as_posted
 import os
+from dotenv import load_dotenv
 
+load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = 1501414995798265967
+CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID"))
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
