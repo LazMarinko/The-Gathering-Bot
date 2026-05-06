@@ -5,7 +5,7 @@ import os
 
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID"))
+CHANNEL_ID = 1501414995798265967
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
