@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from web_scraper.scraper import SpoilerScraper
-
+from gemini import Gemini
 
 class OkupljanjeBot(commands.Bot):
     def __init__(self):
@@ -13,12 +13,14 @@ class OkupljanjeBot(commands.Bot):
         self.config = self.load_config()
 
         self.token = os.getenv("DISCORD_TOKEN")
-        self.channel_id = self.config.get("new_card_channel_id")
+        self.new_card_channel_id = self.config.get("new_card_channel_id")
+        self.ai_channel_id = self.config.get("ai_channel_id")
 
 
         intents = discord.Intents.default()
         intents.message_content = True
         self.scraper = SpoilerScraper()
+        self.gemini = Gemini()
 
         super().__init__(command_prefix="!", intents=intents)
 
@@ -44,25 +46,36 @@ class OkupljanjeBot(commands.Bot):
         async def check_command(ctx):
             await self.check(ctx)
 
-        @commands.command(name="setnewcardchannel")
-        async def set_channel_command(ctx):
-            await self.setnewcardchannel(ctx)
+        @commands.command(name="setchannel")
+        async def set_channel_command(ctx, channel_type: str):
+            await self.setchannel(ctx, channel_type)
+
+        @commands.command(name="rulling")
+        async def rulling_command(ctx,*,message):
+            await self.rules_question(ctx, message=message)
 
         self.add_command(check_command)
         self.add_command(set_channel_command)
+        self.add_command(rulling_command)
 
     @tasks.loop(minutes=30)
     async def spoiler_checker(self):
-        if self.channel_id is None:
+        if self.new_card_channel_id is None:
             print("No new card channel set")
             return
+        try:
+            channel = self.get_channel(int(self.new_card_channel_id))
 
-        channel = self.get_channel(self.channel_id)
+            if channel is None:
+                channel = await self.fetch_channel(int(self.new_card_channel_id))
 
-        if channel is None:
-            channel = await self.fetch_channel(self.channel_id)
+        except discord.NotFound:
+            print(f"Unknown channel: {self.new_card_channel_id}. Run !setchannel cards again.")
+            return
 
-        await self.post_new_spoilers(channel)
+        except discord.Forbidden:
+            print(f"No permission to access channel: {self.new_card_channel_id}")
+            return
 
     @spoiler_checker.before_loop
     async def before_spoiler_checker(self):
@@ -112,9 +125,22 @@ class OkupljanjeBot(commands.Bot):
         await ctx.send(f"Posted {len(new_images)} new spoilers.")
 
 
-    async def setnewcardchannel(self, ctx):
-        self.channel_id = ctx.channel.id
-        self.config["new_card_channel_id"] = self.channel_id
+    async def rules_question(self, ctx, *, message):
+        response = self.gemini.rullings_question(message)
+        await ctx.send(response)
+
+
+    async def setchannel(self, ctx, channel_type: str):
+        if channel_type == "new_cards":
+            self.new_card_channel_id = ctx.channel.id
+            self.config["new_card_channel_id"] = self.new_card_channel_id
+        elif channel_type == "ai":
+            self.ai_channel_id = ctx.channel.id
+            self.config["ai_channel_id"] = self.ai_channel_id
+        else:
+            await ctx.send("Invalid channel type")
+            return
+
         self.save_config()
 
-        await ctx.send(f"New card channel set to {ctx.channel.mention}")
+        await ctx.send(f"Channel {channel_type} for channel set to {ctx.channel.mention}")
