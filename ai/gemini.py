@@ -6,7 +6,7 @@ import os
 
 class Gemini:
     def __init__(self):
-        self.client = genai.Client(os.getenv("GEMINI_KEY"))
+        self.client = genai.Client(api_key=os.getenv("GEMINI_KEY"))
 
 
     def rullings_question(self, message):

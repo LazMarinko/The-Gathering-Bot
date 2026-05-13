@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from web_scraper.scraper import SpoilerScraper
-from gemini import Gemini
+from ai.gemini import Gemini
 
 class OkupljanjeBot(commands.Bot):
     def __init__(self):
