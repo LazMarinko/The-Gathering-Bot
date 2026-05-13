@@ -77,6 +77,8 @@ class OkupljanjeBot(commands.Bot):
             print(f"No permission to access channel: {self.new_card_channel_id}")
             return
 
+        await self.post_new_spoilers(channel)
+
     @spoiler_checker.before_loop
     async def before_spoiler_checker(self):
         await self.wait_until_ready()
