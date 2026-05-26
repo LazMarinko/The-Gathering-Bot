@@ -19,7 +19,7 @@ class OkupljanjeBot(commands.Bot):
 
         self.token = os.getenv("DISCORD_TOKEN")
         self.new_card_channel_id = self.config.get("new_card_channel_id")
-        self.ai_channel_id = self.config.get("ai_channel_id")
+        self.ruling_channel_id = self.config.get("ruling_channel_id")
         self.deckcut_channel_id = self.config.get("deckcut_channel_id")
 
         intents = discord.Intents.default()
@@ -28,7 +28,7 @@ class OkupljanjeBot(commands.Bot):
         self.ruling = RulingQuestion()
         self.deckcut_ai = DeckCut()
 
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix="!", intents=intents, help_command=None)
 
 
     def load_config(self):
@@ -62,11 +62,15 @@ class OkupljanjeBot(commands.Bot):
         @commands.command(name="deckcut")
         async def deckcut_command(ctx,*,message):
             await self.deckcut(ctx, message=message)
+        @commands.command(name="help")
+        async def help_command(ctx,*,message=None):
+            await self.help(ctx, message=message)
 
         self.add_command(check_command)
         self.add_command(set_channel_command)
         self.add_command(rulling_command)
         self.add_command(deckcut_command)
+        self.add_command(help_command)
 
     @tasks.loop(minutes=30)
     async def spoiler_checker(self):
@@ -228,9 +232,9 @@ class OkupljanjeBot(commands.Bot):
         if channel_type == "new_cards":
             self.new_card_channel_id = ctx.channel.id
             self.config["new_card_channel_id"] = self.new_card_channel_id
-        elif channel_type == "ai":
-            self.ai_channel_id = ctx.channel.id
-            self.config["ai_channel_id"] = self.ai_channel_id
+        elif channel_type == "ruling":
+            self.ruling_channel_id = ctx.channel.id
+            self.config["ruling_channel_id"] = self.ruling_channel_id
         elif channel_type == "deckcut":
             self.deckcut_channel_id = ctx.channel.id
             self.config["deckcut_channel_id"] = self.deckcut_channel_id
@@ -241,3 +245,52 @@ class OkupljanjeBot(commands.Bot):
         self.save_config()
 
         await ctx.send(f"Channel {channel_type} for channel set to {ctx.channel.mention}")
+
+
+    async def help(self, ctx, *, message = None):
+        if message is None:
+            await ctx.send(
+                "List of commands:\n"
+                "!ruling\n"
+                "!setchannel\n"
+                "!deckcut\n\n"
+                "For more information use:\n"
+                "`!help ruling`\n"
+                "`!help setchannel`\n"
+                "`!help deckcut`"
+            )
+            return
+        if "ruling" in message:
+            await ctx.send(
+                "`!ruling` must be followed by a Magic: The Gathering ruling question.\n"
+                "Example: `!ruling Can I counter a spell that can't be countered?`"
+            )
+        elif "setchannel" in message:
+            await ctx.send(
+                "`!setchannel` sets the current channel for one of the bot's features.\n\n"
+                "Available channel types:\n"
+                "- `new_cards` → Channel for automatic new card spoiler posts\n"
+                "- `ruling` → Channel for MTG ruling questions\n"
+                "- `deckcut` → Channel for AI deck cutting requests\n\n"
+                "Examples:\n"
+                "`!setchannel new_cards`\n"
+                "`!setchannel ruling`\n"
+                "`!setchannel deckcut`"
+            )
+        elif "deckcut" in message:
+            await ctx.send(
+                "`!deckcut` trims a Commander decklist down to the legal size using AI.\n\n"
+                "Usage:\n"
+                "`!deckcut Commander Name Tags(optional)`\n\n"
+                "After running the command, upload the decklist as a `.txt` file.\n\n"
+                "Examples:\n"
+                "`!deckcut Atraxa poison`\n"
+                "`!deckcut Yurlok group slug`\n"
+                "`!deckcut Loot blink`\n\n"
+                "The bot will analyze the deck, determine the required cuts, "
+                "and return the updated decklist."
+            )
+        else:
+            await ctx.send(
+                "Sent message contains no known commands."
+            )
