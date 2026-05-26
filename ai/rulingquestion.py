@@ -4,7 +4,7 @@ import os
 
 
 
-class Gemini:
+class RulingQuestion:
     def __init__(self):
         self.client = genai.Client(api_key=os.getenv("GEMINI_KEY"))
 

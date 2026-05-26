@@ -1,10 +1,15 @@
+import asyncio
 import os
 import json
 import discord
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
+from google.genai.errors import ServerError
+
 from web_scraper.scraper import SpoilerScraper
-from ai.gemini import Gemini
+from ai.rulingquestion import RulingQuestion
+from ai.deckcut import DeckCut
+import io
 
 class OkupljanjeBot(commands.Bot):
     def __init__(self):
@@ -14,15 +19,16 @@ class OkupljanjeBot(commands.Bot):
 
         self.token = os.getenv("DISCORD_TOKEN")
         self.new_card_channel_id = self.config.get("new_card_channel_id")
-        self.ai_channel_id = self.config.get("ai_channel_id")
-
+        self.ruling_channel_id = self.config.get("ruling_channel_id")
+        self.deckcut_channel_id = self.config.get("deckcut_channel_id")
 
         intents = discord.Intents.default()
         intents.message_content = True
         self.scraper = SpoilerScraper()
-        self.gemini = Gemini()
+        self.ruling = RulingQuestion()
+        self.deckcut_ai = DeckCut()
 
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix="!", intents=intents, help_command=None)
 
 
     def load_config(self):
@@ -50,13 +56,21 @@ class OkupljanjeBot(commands.Bot):
         async def set_channel_command(ctx, channel_type: str):
             await self.setchannel(ctx, channel_type)
 
-        @commands.command(name="rulling")
+        @commands.command(name="ruling")
         async def rulling_command(ctx,*,message):
             await self.rules_question(ctx, message=message)
+        @commands.command(name="deckcut")
+        async def deckcut_command(ctx,*,message):
+            await self.deckcut(ctx, message=message)
+        @commands.command(name="help")
+        async def help_command(ctx,*,message=None):
+            await self.help(ctx, message=message)
 
         self.add_command(check_command)
         self.add_command(set_channel_command)
         self.add_command(rulling_command)
+        self.add_command(deckcut_command)
+        self.add_command(help_command)
 
     @tasks.loop(minutes=30)
     async def spoiler_checker(self):
@@ -128,17 +142,102 @@ class OkupljanjeBot(commands.Bot):
 
 
     async def rules_question(self, ctx, *, message):
-        response = self.gemini.rullings_question(message)
+        response = self.ruling.rullings_question(message)
         await ctx.send(response)
+
+    async def send_text_file(self, ctx, text, filename="deck_cuts.txt"):
+        file = discord.File(
+            fp = io.BytesIO(text.encode("utf-8")),
+            filename=filename
+        )
+        await ctx.send(
+            content = "Here is the list with the cuts",
+            file = file
+        )
+
+    async def deckcut(self, ctx, *, message):
+        await ctx.send(
+            "Now send the decklist"
+        )
+
+        def check(reply):
+            return(
+                reply.author == ctx.author
+                and reply.channel == ctx.channel
+                and len(reply.attachments) > 0
+            )
+
+        try:
+            reply = await self.wait_for(
+                "message",
+                check=check,
+                timeout=120
+            )
+        except asyncio.TimeoutError:
+            await ctx.send("Timed out.")
+            return
+
+        attachment = reply.attachments[0]
+
+        if not attachment.filename.endswith(".txt"):
+            await ctx.send("Pleae upload a .txt file.")
+            return
+
+        file_bytes = await attachment.read()
+        decklist = file_bytes.decode("utf-8")
+
+        def count_deck_cards(decklist_text):
+            count = 0
+
+            for line in decklist_text.splitlines():
+                line = line.strip()
+
+                if not line:
+                    continue
+
+                parts = line.split(" ", 1)
+
+                if parts[0].isdigit():
+                    count += int(parts[0])
+                else:
+                    count += 1
+
+            return count
+
+        deck_count = count_deck_cards(decklist)
+        cards_to_cut = deck_count - 99
+
+        full_prompt = f"""
+            Commander + Tags:
+            {message}
+            
+            Decklist:
+            {decklist}
+            
+            Cards to cut:
+            {cards_to_cut}
+        """
+        try:
+            response = await asyncio.to_thread(
+                self.deckcut_ai.deckcut,
+                full_prompt
+            )
+        except ServerError:
+            await ctx.send("Server error.")
+            return
+        await self.send_text_file(ctx, response)
 
 
     async def setchannel(self, ctx, channel_type: str):
         if channel_type == "new_cards":
             self.new_card_channel_id = ctx.channel.id
             self.config["new_card_channel_id"] = self.new_card_channel_id
-        elif channel_type == "ai":
-            self.ai_channel_id = ctx.channel.id
-            self.config["ai_channel_id"] = self.ai_channel_id
+        elif channel_type == "ruling":
+            self.ruling_channel_id = ctx.channel.id
+            self.config["ruling_channel_id"] = self.ruling_channel_id
+        elif channel_type == "deckcut":
+            self.deckcut_channel_id = ctx.channel.id
+            self.config["deckcut_channel_id"] = self.deckcut_channel_id
         else:
             await ctx.send("Invalid channel type")
             return
@@ -146,3 +245,52 @@ class OkupljanjeBot(commands.Bot):
         self.save_config()
 
         await ctx.send(f"Channel {channel_type} for channel set to {ctx.channel.mention}")
+
+
+    async def help(self, ctx, *, message = None):
+        if message is None:
+            await ctx.send(
+                "List of commands:\n"
+                "!ruling\n"
+                "!setchannel\n"
+                "!deckcut\n\n"
+                "For more information use:\n"
+                "`!help ruling`\n"
+                "`!help setchannel`\n"
+                "`!help deckcut`"
+            )
+            return
+        if "ruling" in message:
+            await ctx.send(
+                "`!ruling` must be followed by a Magic: The Gathering ruling question.\n"
+                "Example: `!ruling Can I counter a spell that can't be countered?`"
+            )
+        elif "setchannel" in message:
+            await ctx.send(
+                "`!setchannel` sets the current channel for one of the bot's features.\n\n"
+                "Available channel types:\n"
+                "- `new_cards` → Channel for automatic new card spoiler posts\n"
+                "- `ruling` → Channel for MTG ruling questions\n"
+                "- `deckcut` → Channel for AI deck cutting requests\n\n"
+                "Examples:\n"
+                "`!setchannel new_cards`\n"
+                "`!setchannel ruling`\n"
+                "`!setchannel deckcut`"
+            )
+        elif "deckcut" in message:
+            await ctx.send(
+                "`!deckcut` trims a Commander decklist down to the legal size using AI.\n\n"
+                "Usage:\n"
+                "`!deckcut Commander Name Tags(optional)`\n\n"
+                "After running the command, upload the decklist as a `.txt` file.\n\n"
+                "Examples:\n"
+                "`!deckcut Atraxa poison`\n"
+                "`!deckcut Yurlok group slug`\n"
+                "`!deckcut Loot blink`\n\n"
+                "The bot will analyze the deck, determine the required cuts, "
+                "and return the updated decklist."
+            )
+        else:
+            await ctx.send(
+                "Sent message contains no known commands."
+            )
