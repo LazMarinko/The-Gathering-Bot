@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 from google.genai.errors import ServerError
 
 from web_scraper.scraper import SpoilerScraper
-from ai.rulingquestion import RulingQuestion
-from ai.deckcut import DeckCut
+from ai.ruling_question import RulingQuestion
+from ai.deck_cut import DeckCut
 import io
 
 class OkupljanjeBot(commands.Bot):
@@ -142,8 +142,11 @@ class OkupljanjeBot(commands.Bot):
 
 
     async def rules_question(self, ctx, *, message):
-        response = self.ruling.rullings_question(message)
-        await ctx.send(response)
+        try:
+            response = self.ruling.rullings_question(message)
+            await ctx.send(response)
+        except ServerError:
+            await ctx.send("Server error please try again later")
 
     async def send_text_file(self, ctx, text, filename="deck_cuts.txt"):
         file = discord.File(
@@ -223,7 +226,7 @@ class OkupljanjeBot(commands.Bot):
                 full_prompt
             )
         except ServerError:
-            await ctx.send("Server error.")
+            await ctx.send("Server error please try again later")
             return
         await self.send_text_file(ctx, response)
 
@@ -263,7 +266,8 @@ class OkupljanjeBot(commands.Bot):
         if "ruling" in message:
             await ctx.send(
                 "`!ruling` must be followed by a Magic: The Gathering ruling question.\n"
-                "Example: `!ruling Can I counter a spell that can't be countered?`"
+                "When searching for a card put the card name in []"
+                "Example: `!ruling Can I counter [Last March of the Ents]?`"
             )
         elif "setchannel" in message:
             await ctx.send(
