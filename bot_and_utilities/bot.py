@@ -41,6 +41,11 @@ class OkupljanjeBot(commands.Bot):
         with open("saved_channels.json", "w", encoding="utf-8") as f:
             json.dump(self.config, f, indent=4)
 
+    async def wrong_channel(self, ctx, channel_id):
+        await ctx.send(
+            f"Please use this command in <#{channel_id}>."
+        )
+
     async def on_ready(self):
         print(f"Logged in as {self.user}")
 
@@ -142,8 +147,12 @@ class OkupljanjeBot(commands.Bot):
 
 
     async def rules_question(self, ctx, *, message):
+        if ctx.channel.id != self.ruling_channel_id:
+            await self.wrong_channel(ctx, self.ruling_channel_id)
+            return
+
         try:
-            response = self.ruling.rullings_question(message)
+            response = self.ruling.rulings_question(message)
             await ctx.send(response)
         except ServerError:
             await ctx.send("Server error please try again later")
@@ -159,6 +168,10 @@ class OkupljanjeBot(commands.Bot):
         )
 
     async def deckcut(self, ctx, *, message):
+        if ctx.channel.id != self.deckcut_channel_id:
+            await self.wrong_channel(ctx, self.deckcut_channel_id)
+            return
+
         await ctx.send(
             "Now send the decklist"
         )
