@@ -4,6 +4,10 @@ import requests
 class CardFinder:
     def __init__(self):
         self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "The-Gathering-Bot/1.0",
+            "Accept": "application/json;q=0.9,*/*;q=0.8"
+        })
 
     def get_card_data(self, card_name):
         try:

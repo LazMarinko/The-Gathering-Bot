@@ -6,6 +6,12 @@ from pathlib import Path
 
 class SpoilerScraper:
     def __init__(self):
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "The-Gathering-Bot/1.0",
+            "Accept": "application/json;q=0.9,*/*;q=0.8"
+        })
+
         self.posted_file = "posted_cards.json"
         self.download_dir = Path("downloaded_cards")
         self.download_dir.mkdir(exist_ok=True)
@@ -46,7 +52,7 @@ class SpoilerScraper:
         if file_path.exists():
             return file_path
 
-        response = requests.get(image_url, timeout=20)
+        response = self.session.get(image_url, timeout=20)
         response.raise_for_status()
 
         with open(file_path, "wb") as file:
@@ -57,8 +63,13 @@ class SpoilerScraper:
     def check_for_new_spoilers(self):
         posted_cards = self.load_posted_cards()
 
-        response = requests.get(self.scryfall_url, params=self.params, timeout=20)
-        response.raise_for_status()
+        response = self.session.get(self.scryfall_url, params=self.params, timeout=20)
+
+        if response.status_code != 200:
+            print(response.url)
+            print(response.status_code)
+            print(response.text)
+            return []
 
         data = response.json()
         new_cards = []

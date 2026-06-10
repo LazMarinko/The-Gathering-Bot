@@ -11,6 +11,7 @@ from ai.ruling_question import RulingQuestion
 from ai.deck_cut import DeckCut
 import io
 
+
 class OkupljanjeBot(commands.Bot):
     def __init__(self):
         load_dotenv()
@@ -18,22 +19,20 @@ class OkupljanjeBot(commands.Bot):
         self.config = self.load_config()
 
         self.token = os.getenv("DISCORD_TOKEN")
-        self.new_card_channel_id = self.config.get("new_card_channel_id")
-        self.ruling_channel_id = self.config.get("ruling_channel_id")
-        self.deckcut_channel_id = self.config.get("deckcut_channel_id")
 
         intents = discord.Intents.default()
         intents.message_content = True
+
         self.scraper = SpoilerScraper()
         self.ruling = RulingQuestion()
         self.deckcut_ai = DeckCut()
 
         super().__init__(command_prefix="!", intents=intents, help_command=None)
 
-
     def load_config(self):
         if not os.path.exists("saved_channels.json"):
             return {}
+
         with open("saved_channels.json", "r", encoding="utf-8") as f:
             return json.load(f)
 
@@ -41,10 +40,32 @@ class OkupljanjeBot(commands.Bot):
         with open("saved_channels.json", "w", encoding="utf-8") as f:
             json.dump(self.config, f, indent=4)
 
+    def get_guild_config(self, guild_id):
+        guild_id = str(guild_id)
+
+        if "guilds" not in self.config:
+            self.config["guilds"] = {}
+
+        if guild_id not in self.config["guilds"]:
+            self.config["guilds"][guild_id] = {}
+
+        return self.config["guilds"][guild_id]
+
+    def get_channel_id(self, guild_id, channel_type):
+        guild_config = self.get_guild_config(guild_id)
+        return guild_config.get(channel_type)
+
+    def set_channel_id(self, guild_id, channel_type, channel_id):
+        guild_config = self.get_guild_config(guild_id)
+        guild_config[channel_type] = channel_id
+        self.save_config()
+
     async def wrong_channel(self, ctx, channel_id):
-        await ctx.send(
-            f"Please use this command in <#{channel_id}>."
-        )
+        if channel_id is None:
+            await ctx.send("No channel has been set for this command yet.")
+            return
+
+        await ctx.send(f"Please use this command in <#{channel_id}>.")
 
     async def on_ready(self):
         print(f"Logged in as {self.user}")
@@ -62,13 +83,15 @@ class OkupljanjeBot(commands.Bot):
             await self.setchannel(ctx, channel_type)
 
         @commands.command(name="ruling")
-        async def rulling_command(ctx,*,message):
+        async def rulling_command(ctx, *, message):
             await self.rules_question(ctx, message=message)
+
         @commands.command(name="deckcut")
-        async def deckcut_command(ctx,*,message):
+        async def deckcut_command(ctx, *, message):
             await self.deckcut(ctx, message=message)
+
         @commands.command(name="help")
-        async def help_command(ctx,*,message=None):
+        async def help_command(ctx, *, message=None):
             await self.help(ctx, message=message)
 
         self.add_command(check_command)
@@ -79,24 +102,55 @@ class OkupljanjeBot(commands.Bot):
 
     @tasks.loop(minutes=30)
     async def spoiler_checker(self):
-        if self.new_card_channel_id is None:
-            print("No new card channel set")
-            return
-        try:
-            channel = self.get_channel(int(self.new_card_channel_id))
+        guilds = self.config.get("guilds", {})
 
-            if channel is None:
-                channel = await self.fetch_channel(int(self.new_card_channel_id))
-
-        except discord.NotFound:
-            print(f"Unknown channel: {self.new_card_channel_id}. Run !setchannel cards again.")
+        if not guilds:
+            print("No servers configured")
             return
 
-        except discord.Forbidden:
-            print(f"No permission to access channel: {self.new_card_channel_id}")
+        new_images = self.scraper.check_for_new_spoilers()
+
+        if not new_images:
+            print("No new spoilers found.")
             return
 
-        await self.post_new_spoilers(channel)
+        posted_anywhere = set()
+
+        for guild_id, guild_config in guilds.items():
+            channel_id = guild_config.get("new_cards")
+
+            if channel_id is None:
+                continue
+
+            try:
+                channel = self.get_channel(int(channel_id))
+
+                if channel is None:
+                    channel = await self.fetch_channel(int(channel_id))
+
+            except discord.NotFound:
+                print(f"Unknown channel: {channel_id} for guild {guild_id}")
+                continue
+
+            except discord.Forbidden:
+                print(f"No permission to access channel: {channel_id}")
+                continue
+
+            for card_id, card_name, image_path in new_images:
+                try:
+                    await channel.send(
+                        content=f"**{card_name}**",
+                        file=discord.File(image_path)
+                    )
+
+                    posted_anywhere.add(card_id)
+                    print(f"Posted {card_name} to guild {guild_id}")
+
+                except Exception as error:
+                    print(f"Failed to post {card_name} to guild {guild_id}: {error}")
+
+        for card_id in posted_anywhere:
+            self.scraper.mark_as_posted(card_id)
 
     @spoiler_checker.before_loop
     async def before_spoiler_checker(self):
@@ -145,10 +199,11 @@ class OkupljanjeBot(commands.Bot):
 
         await ctx.send(f"Posted {len(new_images)} new spoilers.")
 
-
     async def rules_question(self, ctx, *, message):
-        if ctx.channel.id != self.ruling_channel_id:
-            await self.wrong_channel(ctx, self.ruling_channel_id)
+        ruling_channel_id = self.get_channel_id(ctx.guild.id, "ruling")
+
+        if ctx.channel.id != ruling_channel_id:
+            await self.wrong_channel(ctx, ruling_channel_id)
             return
 
         try:
@@ -159,25 +214,26 @@ class OkupljanjeBot(commands.Bot):
 
     async def send_text_file(self, ctx, text, filename="deck_cuts.txt"):
         file = discord.File(
-            fp = io.BytesIO(text.encode("utf-8")),
+            fp=io.BytesIO(text.encode("utf-8")),
             filename=filename
         )
+
         await ctx.send(
-            content = "Here is the list with the cuts",
-            file = file
+            content="Here is the list with the cuts",
+            file=file
         )
 
     async def deckcut(self, ctx, *, message):
-        if ctx.channel.id != self.deckcut_channel_id:
-            await self.wrong_channel(ctx, self.deckcut_channel_id)
+        deckcut_channel_id = self.get_channel_id(ctx.guild.id, "deckcut")
+
+        if ctx.channel.id != deckcut_channel_id:
+            await self.wrong_channel(ctx, deckcut_channel_id)
             return
 
-        await ctx.send(
-            "Now send the decklist"
-        )
+        await ctx.send("Now send the decklist")
 
         def check(reply):
-            return(
+            return (
                 reply.author == ctx.author
                 and reply.channel == ctx.channel
                 and len(reply.attachments) > 0
@@ -196,7 +252,7 @@ class OkupljanjeBot(commands.Bot):
         attachment = reply.attachments[0]
 
         if not attachment.filename.endswith(".txt"):
-            await ctx.send("Pleae upload a .txt file.")
+            await ctx.send("Please upload a .txt file.")
             return
 
         file_bytes = await attachment.read()
@@ -226,13 +282,14 @@ class OkupljanjeBot(commands.Bot):
         full_prompt = f"""
             Commander + Tags:
             {message}
-            
+
             Decklist:
             {decklist}
-            
+
             Cards to cut:
             {cards_to_cut}
         """
+
         try:
             response = await asyncio.to_thread(
                 self.deckcut_ai.deckcut,
@@ -241,29 +298,21 @@ class OkupljanjeBot(commands.Bot):
         except ServerError:
             await ctx.send("Server error please try again later")
             return
+
         await self.send_text_file(ctx, response)
 
-
     async def setchannel(self, ctx, channel_type: str):
-        if channel_type == "new_cards":
-            self.new_card_channel_id = ctx.channel.id
-            self.config["new_card_channel_id"] = self.new_card_channel_id
-        elif channel_type == "ruling":
-            self.ruling_channel_id = ctx.channel.id
-            self.config["ruling_channel_id"] = self.ruling_channel_id
-        elif channel_type == "deckcut":
-            self.deckcut_channel_id = ctx.channel.id
-            self.config["deckcut_channel_id"] = self.deckcut_channel_id
-        else:
+        valid_types = ["new_cards", "ruling", "deckcut"]
+
+        if channel_type not in valid_types:
             await ctx.send("Invalid channel type")
             return
 
-        self.save_config()
+        self.set_channel_id(ctx.guild.id, channel_type, ctx.channel.id)
 
-        await ctx.send(f"Channel {channel_type} for channel set to {ctx.channel.mention}")
+        await ctx.send(f"Channel `{channel_type}` set to {ctx.channel.mention}")
 
-
-    async def help(self, ctx, *, message = None):
+    async def help(self, ctx, *, message=None):
         if message is None:
             await ctx.send(
                 "List of commands:\n"
@@ -276,12 +325,14 @@ class OkupljanjeBot(commands.Bot):
                 "`!help deckcut`"
             )
             return
+
         if "ruling" in message:
             await ctx.send(
                 "`!ruling` must be followed by a Magic: The Gathering ruling question.\n"
-                "When searching for a card put the card name in []"
+                "When searching for a card put the card name in []\n"
                 "Example: `!ruling Can I counter [Last March of the Ents]?`"
             )
+
         elif "setchannel" in message:
             await ctx.send(
                 "`!setchannel` sets the current channel for one of the bot's features.\n\n"
@@ -294,6 +345,7 @@ class OkupljanjeBot(commands.Bot):
                 "`!setchannel ruling`\n"
                 "`!setchannel deckcut`"
             )
+
         elif "deckcut" in message:
             await ctx.send(
                 "`!deckcut` trims a Commander decklist down to the legal size using AI.\n\n"
@@ -307,7 +359,6 @@ class OkupljanjeBot(commands.Bot):
                 "The bot will analyze the deck, determine the required cuts, "
                 "and return the updated decklist."
             )
+
         else:
-            await ctx.send(
-                "Sent message contains no known commands."
-            )
+            await ctx.send("Sent message contains no known commands.")
